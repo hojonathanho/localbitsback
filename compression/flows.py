@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.nn import Module, ModuleList
 
 from .bitstream import Bitstream, is_sym_type
-from .logistic import mixlogistic_logcdf, mixlogistic_logpdf, mixlogistic_invcdf
+from .logistic import mixlogistic_logcdf, mixlogistic_logpdf, mixlogistic_invcdf, force_accurate_mixlogistic_invcdf
 from .nn import init_mode, is_init_enabled, LearnedNorm
 from .utils import sumflat, inverse_sigmoid, standard_normal_logp, process_gaussian
 
@@ -350,8 +350,9 @@ def test_mix_logistic_cdf():
     logscales = 0.1 * torch.randn(*mixlogistic_data_shape, dtype=torch.float64)
     ctor = lambda: MixLogisticCDF(logits=logits, means=means, logscales=logscales,
                                   mix_dim=mix_dim)  # , inv_bisection_tol=1e-12),
-    _run_flow_test(ctor, bs=input_shape[0], x_shape=input_shape[1:])
-    _run_compression_test(ctor, bs=input_shape[0], x_shape=input_shape[1:])
+    with force_accurate_mixlogistic_invcdf():
+        _run_flow_test(ctor, bs=input_shape[0], x_shape=input_shape[1:])
+        _run_compression_test(ctor, bs=input_shape[0], x_shape=input_shape[1:])
 
 
 ############## Unit tests ##############
@@ -441,8 +442,10 @@ def _run_compression_test(m_ctor, *, x_bounds=None, x_shape=(3, 8, 8), aux_shape
     noise_std = 1e-6
     disc_bits = 32
     disc = Discretization(lo=-disc_range, hi=disc_range, bits=disc_bits)
-    ans = ANS(ans_bits=60, ans_init_bits=int(1e6), ans_init_seed=0)
-    stream = Bitstream(ans=ans, disc=disc, device=torch.device('cpu'), default_noise_scale=noise_std)
+    stream = Bitstream(ans_mass_bits=60, ans_init_bits=int(1e6), ans_init_seed=0, ans_num_streams=1,
+                       disc_range=disc_range, disc_bits=disc_bits,
+                       device=torch.device('cpu'), noise_scale=noise_std)
+    ans = stream._ans
 
     # Generate rounded data (so that encode/decode is exact)
     x, aux = _make_test_data(bs, x_shape, aux_shape, x_bounds)
